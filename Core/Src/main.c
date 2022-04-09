@@ -27,23 +27,18 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include "shell.h"
-#include "VL53L1X_api.h"
-#include "VL53l1X_calibration.h"
+#include "vl53l1x.h"
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
-typedef struct VL53L1X_xshut{
-	GPIO_TypeDef* GPIOx;
-	uint16_t GPIO_Pin;
-} VL53L1X_xshut;
-
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define NB_SENSORS 2
+#define NB_SENSORS 3
 
 /* USER CODE END PD */
 
@@ -56,21 +51,13 @@ typedef struct VL53L1X_xshut{
 
 /* USER CODE BEGIN PV */
 
-VL53L1X_xshut xshut[2] = {
-		{GPIOA, GPIO_PIN_0},
-		{GPIOC, GPIO_PIN_0},
+xshut xshut_pins[3] = {
+	{GPIOA, GPIO_PIN_0},
+	{GPIOC, GPIO_PIN_0},
+	{GPIOC, GPIO_PIN_1},
 };
 
-int status = 0;
-uint16_t dev[2];			// device i2c address
-uint16_t Distance[2];		// distance in millimeters
-uint16_t SignalRate[2];
-uint16_t AmbientRate[2];
-uint16_t SpadNum[2];
-uint8_t RangeStatus[2];
-uint8_t dataReady[2];
-int16_t offset[2];
-uint16_t xtalk[2];
+uint16_t Distance[NB_SENSORS];
 
 /* USER CODE END PV */
 
@@ -116,173 +103,28 @@ int main(void)
 	MX_USART2_UART_Init();
 	MX_I2C1_Init();
 	/* USER CODE BEGIN 2 */
-	shell_init(&huart2);
-	printf("lib_vl53l1x_uld\r\n");
 
-	for(int i=0; i<NB_SENSORS; i++){
-		dev[i] = 0x29 << 1;
-		HAL_GPIO_WritePin(xshut[i].GPIOx, xshut[i].GPIO_Pin, GPIO_PIN_RESET);
+	// Shell init
+	shell_init(&huart2);
+
+	// Xshut pins to low level
+	for(int i=0; i<3; i++){
+		HAL_GPIO_WritePin(xshut_pins[i].GPIOx, xshut_pins[i].GPIO_Pin, GPIO_PIN_RESET);
 	}
 
+	HAL_Delay(1000);
 
-	HAL_Delay(500);
+	// Sensors init
+	if(vl53l1x_init(xshut_pins, NB_SENSORS) != VL53L1_ERROR_NONE){
+		printf("vl53l1x_init failed...\r\n");
+		return -1;
+	}
+	printf("VL53L1X initialized...\r\n");
 
 	/* USER CODE END 2 */
 
 	/* Infinite loop */
 	/* USER CODE BEGIN WHILE */
-
-	/* Sensors initialization -----------------------------------------------*/
-
-	for(int i=0; i<NB_SENSORS; i++)
-	{
-		uint8_t sensorState = 0;
-		uint8_t byteData;
-		uint16_t wordData;
-
-		HAL_GPIO_WritePin(xshut[i].GPIOx, xshut[i].GPIO_Pin, GPIO_PIN_SET);
-		HAL_Delay(1000);
-
-		status = VL53L1_RdByte(dev[i], 0x010F, &byteData);
-		printf("VL53L1X Model_ID[%d]: %X\r\n", i, byteData);
-		status = VL53L1_RdByte(dev[i], 0x0110, &byteData);
-		printf("VL53L1X Module_Type[%d]: %X\r\n", i, byteData);
-		status = VL53L1_RdWord(dev[i], 0x010F, &wordData);
-		printf("VL53L1X[%d]: %X\r\n", i, wordData);
-
-		while(sensorState == i){
-			status = VL53L1X_BootState(dev[i], &sensorState);
-			printf("sensorState: %d\r\n", sensorState);
-			HAL_Delay(500);
-		}
-		printf("Chip booted\r\n");
-
-		// This function must to be called to initialize the sensor with the default setting
-		status = VL53L1X_SensorInit(dev[i]);
-		printf("SensorInit() : %d\r\n", status);
-
-		if(i == 0){
-			if((status = VL53L1X_SetI2CAddress(dev[i], 0x56 + i * 3)) == 0){
-				dev[i] = 0x56 + i * 3;
-				printf("new addr = 0x%2X\r\n", dev[i]);
-			}
-		}
-
-
-		// Optional functions to be used to change the main ranging parameters according the application requirements to get the best ranging performances
-		status = VL53L1X_SetDistanceMode(dev[i], 1); // 1=short, 2=long
-		status = VL53L1X_SetInterMeasurementInMs(dev[i], 200); // in ms, IM must be > = TB
-		status = VL53L1X_SetTimingBudgetInMs(dev[i], 200); // in ms possible values [20, 50, 100, 200, 500]
-		//status = VL53L1X_SetDistanceThreshold(dev, 500, 10, 1, 0); // config sympa
-		status = VL53L1X_SetROI(dev[i], 16, 16); // minimum ROI 4,4
-
-		status = VL53L1X_SetOffset(dev[i], 20); // offset compensation in mm
-		//status = VL53L1X_CalibrateOffset(dev, 140, &offset); // may take few second to perform the offset cal
-		//status = VL53L1X_CalibrateXtalk(dev, 1000, &xtalk); // may take few second to perform the xtalk cal
-
-	}
-
-	/*
-
-	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
-	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_0, GPIO_PIN_RESET);
-
-	// Sensor 1
-
-	status = VL53L1_RdByte(dev[0], 0x010F, &byteData);
-	printf("VL53L1X Model_ID[%d]: %X\r\n", 0, byteData);
-	status = VL53L1_RdByte(dev[0], 0x0110, &byteData);
-	printf("VL53L1X Module_Type[%d]: %X\r\n", 0, byteData);
-	status = VL53L1_RdWord(dev[0], 0x010F, &wordData);
-	printf("VL53L1X[%d]: %X\r\n", 0, wordData);
-
-	sensorState = 0;
-	while(sensorState == 0){
-		status = VL53L1X_BootState(dev[0], &sensorState);
-		printf("sensorState: %d\r\n", sensorState);
-		HAL_Delay(500);
-	}
-	printf("Chip booted\r\n");
-
-	// This function must to be called to initialize the sensor with the default setting
-	status = VL53L1X_SensorInit(dev[0]);
-	printf("SensorInit() : %d\r\n", status);
-
-	HAL_Delay(500);
-
-	if((status = VL53L1X_SetI2CAddress(dev[0], 0x56)) == 0){
-		dev[0] = 0x56;
-		printf("new addr = 0x%2X\r\n", dev[0]);
-	}
-
-
-	HAL_Delay(500);
-	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_0, GPIO_PIN_SET);
-
-	// Optional functions to be used to change the main ranging parameters according the application requirements to get the best ranging performances
-	status = VL53L1X_SetDistanceMode(dev[0], 1); // 1=short, 2=long
-	status = VL53L1X_SetInterMeasurementInMs(dev[0], 200); // in ms, IM must be > = TB
-	status = VL53L1X_SetTimingBudgetInMs(dev[0], 200); // in ms possible values [20, 50, 100, 200, 500]
-	//status = VL53L1X_SetDistanceThreshold(dev, 500, 10, 1, 0); // config sympa
-	status = VL53L1X_SetROI(dev[0], 16, 16); // minimum ROI 4,4
-
-	status = VL53L1X_SetOffset(dev[0], 20); // offset compensation in mm
-	//status = VL53L1X_CalibrateOffset(dev, 140, &offset); // may take few second to perform the offset cal
-	//status = VL53L1X_CalibrateXtalk(dev, 1000, &xtalk); // may take few second to perform the xtalk cal
-
-	//printf("VL53L1X Ultra Lite Driver Example running ...\r\n");
-
-	HAL_Delay(1000);
-
-	// Sensor 2
-
-	status = VL53L1_RdByte(dev[1], 0x010F, &byteData);
-	printf("VL53L1X Model_ID[%d]: %X\r\n", 1, byteData);
-	status = VL53L1_RdByte(dev[1], 0x0110, &byteData);
-	printf("VL53L1X Module_Type[%d]: %X\r\n", 1, byteData);
-	status = VL53L1_RdWord(dev[1], 0x010F, &wordData);
-	printf("VL53L1X[%d]: %X\r\n", 1, wordData);
-
-	sensorState = 0;
-	while(sensorState == 0){
-		status = VL53L1X_BootState(dev[1], &sensorState);
-		printf("sensorState: %d\r\n", sensorState);
-		HAL_Delay(500);
-	}
-	printf("Chip booted\r\n");
-
-	// This function must to be called to initialize the sensor with the default setting
-	status = VL53L1X_SensorInit(dev[1]);
-	printf("SensorInit() : %d\r\n", status);
-
-	HAL_Delay(500);
-
-	if((status = VL53L1X_SetI2CAddress(dev[1], dev[1] + 1 + 1)) == 0){
-		dev[1] = dev[1] + 1 + 1;
-		printf("new addr = 0x%2X\r\n", dev[1]);
-	}
-
-	HAL_Delay(500);
-
-	// Optional functions to be used to change the main ranging parameters according the application requirements to get the best ranging performances
-	status = VL53L1X_SetDistanceMode(dev[1], 1); // 1=short, 2=long
-	status = VL53L1X_SetInterMeasurementInMs(dev[1], 200); // in ms, IM must be > = TB
-	status = VL53L1X_SetTimingBudgetInMs(dev[1], 200); // in ms possible values [20, 50, 100, 200, 500]
-	//status = VL53L1X_SetDistanceThreshold(dev, 500, 10, 1, 0); // config sympa
-	status = VL53L1X_SetROI(dev[1], 16, 16); // minimum ROI 4,4
-
-	status = VL53L1X_SetOffset(dev[1], 20); // offset compensation in mm
-	//status = VL53L1X_CalibrateOffset(dev, 140, &offset); // may take few second to perform the offset cal
-	//status = VL53L1X_CalibrateXtalk(dev, 1000, &xtalk); // may take few second to perform the xtalk cal
-
-	//printf("VL53L1X Ultra Lite Driver Example running ...\r\n");
-
-	 */
-
-	HAL_Delay(1000);
-
-	status = VL53L1X_StartRanging(dev[0]); // This function has to be called to enable the ranging
-	status = VL53L1X_StartRanging(dev[1]); // This function has to be called to enable the ranging
 
 	while (1)
 	{
@@ -348,37 +190,19 @@ void SystemClock_Config(void)
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-
 	if(GPIO_Pin == GPIO_PIN_4){
-
-#if (NB_SENSORS >= 1)
-		status = VL53L1X_GetRangeStatus(dev[0], &RangeStatus[0]);
-		status = VL53L1X_GetDistance(dev[0], &Distance[0]);
-		status = VL53L1X_GetSignalRate(dev[0], &SignalRate[0]);
-		status = VL53L1X_GetAmbientRate(dev[0], &AmbientRate[0]);
-		status = VL53L1X_GetSpadNb(dev[0], &SpadNum[0]);
-		//printf("Dist[0]=%u, %u, %u, %u, %u\r\n", Distance[0], RangeStatus[0], SignalRate[0], AmbientRate[0],SpadNum[0]);
-		status = VL53L1X_ClearInterrupt(dev[0]); // clear interrupt has to be called to enable next interrupt
-#endif
+		Distance[0] = vl53l1x_getDistance(0);
+		if(Distance[0] == -1) vl53l1x_init(xshut_pins, NB_SENSORS);
 	}
 
 	if(GPIO_Pin == GPIO_PIN_7){
-
-#if (NB_SENSORS >= 2)
-		status = VL53L1X_GetRangeStatus(dev[1], &RangeStatus[1]);
-		status = VL53L1X_GetDistance(dev[1], &Distance[1]);
-		status = VL53L1X_GetSignalRate(dev[1], &SignalRate[1]);
-		status = VL53L1X_GetAmbientRate(dev[1], &AmbientRate[1]);
-		status = VL53L1X_GetSpadNb(dev[1], &SpadNum[1]);
-		//printf("Dist[1]=%u, %u, %u, %u, %u\r\n", Distance[1], RangeStatus[1], SignalRate[1], AmbientRate[1],SpadNum[1]);
-		status = VL53L1X_ClearInterrupt(dev[1]); // clear interrupt has to be called to enable next interrupt
-#endif
+		Distance[1] = vl53l1x_getDistance(1);
+		if(Distance[1] == -1) vl53l1x_init(xshut_pins, NB_SENSORS);
 	}
 
 	if(GPIO_Pin == GPIO_PIN_10){
-#if (NB_SENSORS >= 3)
-		printf("EXTI10-15\r\n");
-#endif
+		Distance[2] = vl53l1x_getDistance(2);
+		if(Distance[2] == -1) vl53l1x_init(xshut_pins, NB_SENSORS);
 	}
 }
 
